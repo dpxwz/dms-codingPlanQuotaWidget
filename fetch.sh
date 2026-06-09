@@ -360,7 +360,7 @@ hermes_token_stats() {
 
     # Read data from sqlite
     local data
-    data=$(sqlite3 -list -separator '|' "$DB_PATH" "SELECT date(started_at, 'unixepoch', 'localtime') as day, COALESCE(model, 'unknown') as model_name, SUM(input_tokens + output_tokens) as total FROM sessions WHERE started_at >= unixepoch('now', 'localtime', '-29 days', 'start of day', 'utc') GROUP BY day, model_name;" 2>/dev/null)
+    data=$(sqlite3 -list -separator '|' "$DB_PATH" "SELECT date(started_at, 'unixepoch', 'localtime') as day, COALESCE(model, 'unknown') as model_name, SUM(input_tokens + output_tokens + cache_read_tokens) as total FROM sessions WHERE started_at >= unixepoch('now', 'localtime', '-29 days', 'start of day', 'utc') GROUP BY day, model_name;" 2>/dev/null)
     
     local history_json="["
     local i date_str day_total models_json first_model line m_name m_tokens
@@ -402,7 +402,7 @@ hermes_token_stats() {
         today_out=${today_out:-0}
         today_cached=${today_cached:-0}
         today_reasoning=${today_reasoning:-0}
-        today_total=$((today_in + today_out))
+        today_total=$((today_in + today_out + today_cached))
     fi
 
     jq -n \
