@@ -195,19 +195,23 @@ cursor_fetch() {
     local now; now=$(date +%s)
     echo "$resp" | jq -c --arg mem "${mem:-pro}" --argjson now "$now" '
         .planUsage as $p |
-        ((100 - (($p.totalPercentUsed) // 0)) | floor) as $rem |
         (($p.limit // 0) / 100) as $lim |
         (($p.autoPercentUsed // 0) | round) as $auto |
         (($p.apiPercentUsed  // 0) | round) as $api |
+        ((100 - $auto) | floor | if . < 0 then 0 else . end) as $autoRem |
+        ((100 - $api) | floor | if . < 0 then 0 else . end) as $apiRem |
+        ([$autoRem, $apiRem] | min) as $rem |
         {id:"cursor",name:"Cursor",icon:"code",ok:true,error:null,
          level:(if $rem<15 then "crit" elif $rem<40 then "warn" else "ok" end),
          headlinePct:$rem, headlineText:($rem|tostring)+"%",
          sub:($mem|ascii_upcase),
          windows:[
-            {label:"Included usage", remainingPct:$rem,
+            {label:"Auto", remainingPct:$autoRem,
              resetAt:(((.billingCycleEnd // "0")|tonumber)/1000|floor),
-             detail:("$" + ($lim|tostring) + " plan · Auto " + ($auto|tostring)
-                     + "% / API " + ($api|tostring) + "% used")}
+             detail:("$" + ($lim|tostring) + " plan · Auto " + ($auto|tostring) + "% used")},
+            {label:"API", remainingPct:$apiRem,
+             resetAt:(((.billingCycleEnd // "0")|tonumber)/1000|floor),
+             detail:("API " + ($api|tostring) + "% used")}
          ],
          updatedAt:$now, stale:false}'
 }

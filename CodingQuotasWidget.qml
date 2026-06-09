@@ -375,7 +375,7 @@ PluginComponent {
 
     // ---- Popout: detailed breakdown ----------------------------------------
     popoutWidth: 800
-    popoutHeight: 860
+    popoutHeight: 900
 
     popoutContent: Component {
         PopoutComponent {
