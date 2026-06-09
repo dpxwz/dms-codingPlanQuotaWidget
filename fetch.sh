@@ -308,7 +308,7 @@ enable_key() {
     esac
 }
 
-ALL="codex cursor antigravity deepseek opencodeGo"
+ALL="codex cursor antigravity opencodeGo deepseek"
 arg="${1:-all}"
 
 if [ "$arg" = "all" ]; then
