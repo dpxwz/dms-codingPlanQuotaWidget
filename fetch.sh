@@ -346,6 +346,72 @@ opencode_fetch() {
 }
 
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+hermes_token_stats() {
+    local DB_PATH="$HOME/.hermes/state.db"
+    if [ ! -f "$DB_PATH" ]; then
+        echo "null"
+        return
+    fi
+
+    # Read data from sqlite
+    local data
+    data=$(sqlite3 -list -separator '|' "$DB_PATH" "SELECT date(started_at, 'unixepoch', 'localtime') as day, COALESCE(model, 'unknown') as model_name, SUM(input_tokens + output_tokens) as total FROM sessions WHERE started_at >= unixepoch('now', 'localtime', '-29 days', 'start of day', 'utc') GROUP BY day, model_name;" 2>/dev/null)
+    
+    local history_json="["
+    local i date_str day_total models_json first_model line m_name m_tokens
+    for i in {0..29}; do
+        date_str=$(date -d "$i days ago" +%Y-%m-%d)
+        day_total=0
+        models_json="["
+        first_model=true
+        while read -r line; do
+            if [ -n "$line" ]; then
+                m_name=$(echo "$line" | cut -d"|" -f2)
+                m_tokens=$(echo "$line" | cut -d"|" -f3)
+                day_total=$((day_total + m_tokens))
+                if [ "$first_model" = false ]; then
+                    models_json="${models_json},"
+                fi
+                models_json="${models_json}{\"model\":\"$m_name\",\"tokens\":$m_tokens}"
+                first_model=false
+            fi
+        done < <(echo "$data" | grep "^$date_str|")
+        models_json="${models_json}]"
+        if [ "$i" -ne 0 ]; then
+            history_json="${history_json},"
+        fi
+        history_json="${history_json}{\"date\":\"$date_str\",\"total\":$day_total,\"models\":$models_json}"
+    done
+    history_json="${history_json}]"
+
+    local today_in=0 today_out=0 today_cached=0 today_reasoning=0 today_total=0
+    local today_components
+    today_components=$(sqlite3 -list -separator '|' "$DB_PATH" "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(reasoning_tokens), 0) FROM sessions WHERE started_at >= unixepoch('now', 'localtime', 'start of day', 'utc');" 2>/dev/null)
+    if [ -n "$today_components" ]; then
+        today_in=$(echo "$today_components" | cut -d"|" -f1)
+        today_out=$(echo "$today_components" | cut -d"|" -f2)
+        today_cached=$(echo "$today_components" | cut -d"|" -f3)
+        today_reasoning=$(echo "$today_components" | cut -d"|" -f4)
+        
+        today_in=${today_in:-0}
+        today_out=${today_out:-0}
+        today_cached=${today_cached:-0}
+        today_reasoning=${today_reasoning:-0}
+        today_total=$((today_in + today_out))
+    fi
+
+    jq -n \
+       --argjson in "$today_in" \
+       --argjson out "$today_out" \
+       --argjson cached "$today_cached" \
+       --argjson reasoning "$today_reasoning" \
+       --argjson total "$today_total" \
+       --argjson history "$history_json" \
+       '{today:{input:$in,output:$out,cached:$cached,reasoning:$reasoning,total:$total},history:$history}'
+}
+
+# ----------------------------------------------------------------------------
 run_one() {
     case "$1" in
         codex)       codex_fetch ;;
@@ -386,7 +452,18 @@ for p in $list; do
     run_one "$p" > "$tmp/$(printf '%02d' "$i").json" 2>/dev/null &
     i=$((i+1))
 done
+
+if is_enabled "enableHermes"; then
+    hermes_token_stats > "$tmp/hermes_stats.tmp" 2>/dev/null &
+fi
+
 wait
 
-jq -s --argjson ts "$(date +%s)" '{ts:$ts, providers:[ .[] | select(. != null) ]}' "$tmp"/*.json 2>/dev/null \
-    || echo '{"ts":0,"providers":[]}'
+hermes_json="null"
+if [ -f "$tmp/hermes_stats.tmp" ]; then
+    hermes_json=$(cat "$tmp/hermes_stats.tmp")
+fi
+
+jq -s --argjson ts "$(date +%s)" --argjson hermes "${hermes_json:-null}" \
+    '{ts:$ts, providers:[ .[] | select(. != null) ], hermes:$hermes}' "$tmp"/*.json 2>/dev/null \
+    || echo '{"ts":0,"providers":[],"hermes":null}'

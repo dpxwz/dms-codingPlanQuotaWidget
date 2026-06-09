@@ -40,6 +40,13 @@ PluginSettings {
     }
 
     ToggleSetting {
+        settingKey: "enableHermes"
+        label: "Hermes"
+        description: "Hermes Agent Token Tracker — daily & 30d usage (read from ~/.hermes sessions)"
+        defaultValue: true
+    }
+
+    ToggleSetting {
         settingKey: "enableCursor"
         label: "Cursor"
         description: "Cursor included-plan usage (read from the Cursor app session)"
