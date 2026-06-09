@@ -38,6 +38,61 @@ mkerr() { # id name icon error headlineText sub
 }
 
 # ----------------------------------------------------------------------------
+codex_token_stats() {
+    local sessions_dir="$HOME/.codex/sessions"
+    local today_in=0 today_out=0 today_cached=0 today_reasoning=0 today_total=0
+    local history_json="["
+    
+    local i d day_dir f val ttu tot in out cached reasoning date_str day_sum
+    for i in {0..29}; do
+        d=$(date -d "$i days ago" +%Y/%m/%d)
+        day_dir="$sessions_dir/$d"
+        day_sum=0
+        if [ -d "$day_dir" ]; then
+            while read -r f; do
+                [ -f "$f" ] || continue
+                val=$(tac "$f" 2>/dev/null | grep -m1 '"type"[[:space:]]*:[[:space:]]*"token_count"')
+                if [ -n "$val" ]; then
+                    ttu=$(grep -oP '"total_token_usage"\s*:\s*\{[^\}]+\}' <<< "$val")
+                    if [ -n "$ttu" ]; then
+                        tot=$(grep -oP '"total_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
+                        day_sum=$((day_sum + ${tot:-0}))
+                        
+                        if [ "$i" -eq 0 ]; then
+                            in=$(grep -oP '"input_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
+                            out=$(grep -oP '"output_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
+                            cached=$(grep -oP '"cached_input_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
+                            reasoning=$(grep -oP '"reasoning_output_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
+                            
+                            today_in=$((today_in + ${in:-0}))
+                            today_out=$((today_out + ${out:-0}))
+                            today_cached=$((today_cached + ${cached:-0}))
+                            today_reasoning=$((today_reasoning + ${reasoning:-0}))
+                            today_total=$((today_total + ${tot:-0}))
+                        fi
+                    fi
+                fi
+            done < <(find "$day_dir" -type f -name '*.jsonl' 2>/dev/null)
+        fi
+        date_str=$(date -d "$i days ago" +%Y-%m-%d)
+        if [ "$i" -gt 0 ]; then
+            history_json="${history_json},"
+        fi
+        history_json="${history_json}{\"date\":\"$date_str\",\"total\":$day_sum}"
+    done
+    history_json="${history_json}]"
+    
+    jq -n \
+       --argjson in "$today_in" \
+       --argjson out "$today_out" \
+       --argjson cached "$today_cached" \
+       --argjson reasoning "$today_reasoning" \
+       --argjson total "$today_total" \
+       --argjson history "$history_json" \
+       '{today:{input:$in,output:$out,cached:$cached,reasoning:$reasoning,total:$total},history:$history}'
+}
+
+# ----------------------------------------------------------------------------
 codex_fetch() {
     local dir="$HOME/.codex/sessions"
     [ -d "$dir" ] || { mkerr codex Codex bolt "no codex sessions" "—" "not found"; return; }
@@ -95,8 +150,12 @@ codex_fetch() {
     now=$(date +%s)
     [ $((now - mtime)) -gt 86400 ] && stale=true
     
+    local stats; stats=$(codex_token_stats)
     # Pass whether codex is exhausted as a parameter to jq
-    printf '%s' "$rl" | jq -c --argjson mtime "$mtime" --argjson stale "$stale" --argjson exhausted "$codex_exhausted" '
+    printf '%s' "$rl" | jq -c --argjson mtime "$mtime" \
+        --argjson stale "$stale" \
+        --argjson exhausted "$codex_exhausted" \
+        --argjson tokenTracker "$stats" '
         (if $exhausted or .limit_id == "premium" then 100 else (((.primary.used_percent) // 0)) end) as $pu |
         (((.secondary.used_percent) // 0)) as $su |
         ((100 - $pu) | floor) as $pr |
@@ -110,7 +169,7 @@ codex_fetch() {
             {label:"5h",     remainingPct:$pr, resetAt:(.primary.resets_at   // null), detail:null},
             {label:"Weekly", remainingPct:$sr, resetAt:(.secondary.resets_at // null), detail:null}
          ],
-         updatedAt:$mtime, stale:$stale}'
+         updatedAt:$mtime, stale:$stale, tokenTracker:$tokenTracker}'
 }
 
 # ----------------------------------------------------------------------------
