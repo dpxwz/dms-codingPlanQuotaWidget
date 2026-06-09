@@ -267,7 +267,7 @@ PluginComponent {
     popoutContent: Component {
         PopoutComponent {
             id: popout
-            headerText: "Coding Plan 额度"
+            headerText: "Coding Plan Quota"
             detailsText: root.lastError ? ("Error: " + root.lastError) : "Remaining quota & balance per plan"
             showCloseButton: true
 
