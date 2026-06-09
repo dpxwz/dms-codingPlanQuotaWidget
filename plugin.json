@@ -1,0 +1,14 @@
+{
+    "id": "codingQuotas",
+    "name": "Coding Plan Quotas",
+    "description": "Shows remaining quota / balance for your coding plans: Codex, Cursor, Antigravity, OpenCode Go, and DeepSeek.",
+    "version": "1.0.0",
+    "author": "alan",
+    "type": "widget",
+    "capabilities": ["dankbar-widget", "monitoring"],
+    "component": "./CodingQuotasWidget.qml",
+    "icon": "data_usage",
+    "settings": "./CodingQuotasSettings.qml",
+    "requires": ["bash", "jq", "curl", "sqlite3"],
+    "permissions": ["settings_read", "settings_write", "process", "network"]
+}

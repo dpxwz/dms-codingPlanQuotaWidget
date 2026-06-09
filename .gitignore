@@ -1,0 +1,9 @@
+# Local / editor
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# Debug scratch (used during development)
+/tmp/cq_qml.log
