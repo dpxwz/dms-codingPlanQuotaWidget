@@ -41,22 +41,63 @@ mkerr() { # id name icon error headlineText sub
 codex_fetch() {
     local dir="$HOME/.codex/sessions"
     [ -d "$dir" ] || { mkerr codex Codex bolt "no codex sessions" "—" "not found"; return; }
-    local newest path mtime
-    newest=$(find "$dir" -type f -name '*.jsonl' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1)
-    [ -n "$newest" ] || { mkerr codex Codex bolt "no sessions" "—" ""; return; }
-    mtime=${newest%% *}; mtime=${mtime%.*}
-    path=${newest#* }
-    local line
-    line=$(tac "$path" 2>/dev/null | grep -m1 '"rate_limits"')
-    [ -n "$line" ] || { mkerr codex Codex bolt "no rate-limit data yet" "—" ""; return; }
+    
+    # 1. Determine if the most recent active session ended with a "premium" rate limit (i.e. codex exhausted)
+    local newest_file newest_mtime newest_path latest_line latest_limit_id
+    local codex_exhausted=false
+    newest_file=$(find "$dir" -type f -name '*.jsonl' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1)
+    if [ -n "$newest_file" ]; then
+        newest_mtime=${newest_file%% *}; newest_mtime=${newest_mtime%.*}
+        newest_path=${newest_file#* }
+        local now; now=$(date +%s)
+        # Only check exhaustion if the newest session is recent (within 24 hours)
+        if [ $((now - newest_mtime)) -le 86400 ]; then
+            latest_line=$(tac "$newest_path" 2>/dev/null | grep -m1 '"rate_limits"')
+            if [ -n "$latest_line" ]; then
+                latest_limit_id=$(printf '%s' "$latest_line" | jq -r '.. | objects | select(has("limit_id")) | .limit_id' 2>/dev/null | head -1)
+                if [ "$latest_limit_id" = "premium" ]; then
+                    codex_exhausted=true
+                fi
+            fi
+        fi
+    fi
+
+    # 2. Find the newest session file and line containing actual "codex" rate limits
+    local newest path mtime line=""
+    while read -r newest; do
+        [ -n "$newest" ] || continue
+        mtime=${newest%% *}; mtime=${mtime%.*}
+        path=${newest#* }
+        line=$(tac "$path" 2>/dev/null | grep -m1 -E '"limit_id"[[:space:]]*:[[:space:]]*"codex"')
+        if [ -n "$line" ]; then
+            break
+        fi
+    done < <(find "$dir" -type f -name '*.jsonl' -printf '%T@ %p\n' 2>/dev/null | sort -nr)
+
+    # Fallback to the original method if no codex rate limit was found in any session file
+    if [ -z "$line" ]; then
+        newest=$(find "$dir" -type f -name '*.jsonl' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1)
+        [ -n "$newest" ] || { mkerr codex Codex bolt "no sessions" "—" ""; return; }
+        mtime=${newest%% *}; mtime=${mtime%.*}
+        path=${newest#* }
+        line=$(tac "$path" 2>/dev/null | grep -m1 '"rate_limits"')
+        [ -n "$line" ] || { mkerr codex Codex bolt "no rate-limit data yet" "—" ""; return; }
+    fi
+
     local rl
-    rl=$(printf '%s' "$line" | jq -c 'first(.. | objects | select(has("primary") and has("plan_type")))' 2>/dev/null)
+    rl=$(printf '%s' "$line" | jq -c 'first(.. | objects | select(.limit_id == "codex"))' 2>/dev/null)
+    # Fallback to general primary/plan_type select if limit_id selector is empty
+    if [ -z "$rl" ] || [ "$rl" = "null" ]; then
+        rl=$(printf '%s' "$line" | jq -c 'first(.. | objects | select(has("primary") and has("plan_type")))' 2>/dev/null)
+    fi
     [ -n "$rl" ] && [ "$rl" != "null" ] || { mkerr codex Codex bolt "parse error" "—" ""; return; }
     local now stale=false
     now=$(date +%s)
     [ $((now - mtime)) -gt 86400 ] && stale=true
-    printf '%s' "$rl" | jq -c --argjson mtime "$mtime" --argjson stale "$stale" '
-        (((.primary.used_percent)   // 0)) as $pu |
+    
+    # Pass whether codex is exhausted as a parameter to jq
+    printf '%s' "$rl" | jq -c --argjson mtime "$mtime" --argjson stale "$stale" --argjson exhausted "$codex_exhausted" '
+        (if $exhausted or .limit_id == "premium" then 100 else (((.primary.used_percent) // 0)) end) as $pu |
         (((.secondary.used_percent) // 0)) as $su |
         ((100 - $pu) | floor) as $pr |
         ((100 - $su) | floor) as $sr |
