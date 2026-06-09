@@ -322,7 +322,7 @@ PluginComponent {
                     }
                 }
 
-                Flickable {
+                DankFlickable {
                     anchors.top: topRow.bottom
                     anchors.topMargin: Theme.spacingS
                     width: parent.width
@@ -330,6 +330,7 @@ PluginComponent {
                     clip: true
                     contentHeight: cardColumn.height
                     boundsBehavior: Flickable.StopAtBounds
+                    mouseWheelSpeed: 100
 
                     Column {
                         id: cardColumn
