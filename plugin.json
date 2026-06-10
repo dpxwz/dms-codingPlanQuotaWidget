@@ -6,9 +6,10 @@
     "author": "alan",
     "type": "widget",
     "capabilities": ["dankbar-widget", "monitoring"],
-    "component": "./CodingQuotasWidget.qml",
+    "component": "./CodingQuotasWidget.qml?v=2",
     "icon": "data_usage",
     "settings": "./CodingQuotasSettings.qml",
     "requires": ["bash", "jq", "curl", "sqlite3"],
     "permissions": ["settings_read", "settings_write", "process", "network"]
 }
+

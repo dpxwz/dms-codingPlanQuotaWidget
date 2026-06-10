@@ -143,6 +143,28 @@ PluginComponent {
         return (typeof v === "number" && v >= 30) ? v : 300
     }
     readonly property bool compactBar: pluginData ? (pluginData.compactBar === true) : false
+    property var widgetMetricByProvider: ({})
+    readonly property int quotaCardsEstimatedHeight: {
+        var total = 0
+        for (var i = 0; i < root.providers.length; i++) {
+            var provider = root.providers[i]
+            var windows = provider.windows || []
+            var h = 26
+            if (!provider.ok)
+                h += 34
+            for (var j = 0; j < windows.length; j++) {
+                h += (windows[j].remainingPct !== null && windows[j].remainingPct !== undefined) ? 30 : 20
+                if (windows[j].detail && windows[j].detail.length > 0)
+                    h += 24
+            }
+            total += h + Theme.spacingM * 2
+        }
+        if (root.providers.length > 1)
+            total += (root.providers.length - 1) * Theme.spacingS
+        return Math.max(260, total)
+    }
+    readonly property int mainContentEstimatedHeight: 28 + Theme.spacingS + root.quotaCardsEstimatedHeight
+    readonly property int popoutChromeEstimatedHeight: 40 + Theme.fontSizeMedium + Theme.spacingS * 5
 
     component ProviderIcon: Item {
         id: pi
@@ -204,6 +226,121 @@ PluginComponent {
         }
     }
 
+    function cloneMetricMap(source) {
+        var next = {}
+        if (!source)
+            return next
+        for (var key in source)
+            next[key] = source[key]
+        return next
+    }
+
+    function syncWidgetMetricByProvider() {
+        root.widgetMetricByProvider = root.cloneMetricMap(pluginData ? pluginData.widgetMetricByProvider : null)
+    }
+
+    function setProviderWidgetMetric(providerId, label) {
+        if (!providerId || !label)
+            return
+        var next = {}
+        var current = root.widgetMetricByProvider || {}
+        for (var key in current)
+            next[key] = current[key]
+        next[providerId] = label
+        root.widgetMetricByProvider = next
+        if (pluginData)
+            pluginData.widgetMetricByProvider = next
+        if (root.pluginService && root.pluginId)
+            root.pluginService.savePluginData(root.pluginId, "widgetMetricByProvider", next)
+    }
+
+    function quotaLevelFromPct(pct) {
+        if (pct === null || pct === undefined)
+            return "neutral"
+        if (pct < 15)
+            return "crit"
+        if (pct < 40)
+            return "warn"
+        return "ok"
+    }
+
+    function findProviderWindow(provider, label) {
+        if (!provider || !provider.windows)
+            return null
+        for (var i = 0; i < provider.windows.length; i++) {
+            if (provider.windows[i].label === label)
+                return provider.windows[i]
+        }
+        return null
+    }
+
+    function isWindowSelectable(win) {
+        return win && win.remainingPct !== null && win.remainingPct !== undefined
+    }
+
+    function providerDefaultWindowLabel(provider) {
+        if (!provider || !provider.windows || provider.windows.length === 0)
+            return ""
+
+        if (provider.id === "codex" && pluginData && pluginData.codexWidgetMetric) {
+            return pluginData.codexWidgetMetric === "5h" ? "5h" : "Weekly"
+        }
+
+        if (provider.headlinePct !== null && provider.headlinePct !== undefined) {
+            for (var i = 0; i < provider.windows.length; i++) {
+                if (root.isWindowSelectable(provider.windows[i]) && provider.windows[i].remainingPct === provider.headlinePct)
+                    return provider.windows[i].label
+            }
+        }
+
+        for (var j = 0; j < provider.windows.length; j++) {
+            if (root.isWindowSelectable(provider.windows[j]))
+                return provider.windows[j].label
+        }
+
+        return provider.windows[0].label || ""
+    }
+
+    function getProviderSelectedWindowLabel(provider) {
+        if (!provider)
+            return ""
+        var saved = root.widgetMetricByProvider ? root.widgetMetricByProvider[provider.id] : undefined
+        if (saved && root.findProviderWindow(provider, saved))
+            return saved
+        return root.providerDefaultWindowLabel(provider)
+    }
+
+    function getProviderSelectedWindow(provider) {
+        return root.findProviderWindow(provider, root.getProviderSelectedWindowLabel(provider))
+    }
+
+    function isProviderWindowSelected(provider, win) {
+        return provider && win && root.getProviderSelectedWindowLabel(provider) === win.label
+    }
+
+    function getProviderDisplayPct(provider) {
+        if (!provider)
+            return null
+        var win = root.getProviderSelectedWindow(provider)
+        if (root.isWindowSelectable(win))
+            return win.remainingPct
+        return provider.headlinePct
+    }
+
+    function getProviderDisplayText(provider) {
+        var pct = root.getProviderDisplayPct(provider)
+        if (pct !== null && pct !== undefined)
+            return pct + "%"
+        return provider && provider.headlineText ? provider.headlineText : "—"
+    }
+
+    function getProviderDisplayLevel(provider) {
+        var pct = root.getProviderDisplayPct(provider)
+        if (pct !== null && pct !== undefined)
+            return root.quotaLevelFromPct(pct)
+        return provider ? provider.level : "neutral"
+    }
+
     function fmtReset(ts) {
         if (!ts)
             return ""
@@ -252,7 +389,12 @@ PluginComponent {
         }, 50, 30000)
     }
 
-    Component.onCompleted: refresh()
+    onPluginDataChanged: root.syncWidgetMetricByProvider()
+
+    Component.onCompleted: {
+        root.syncWidgetMetricByProvider()
+        root.refresh()
+    }
 
     Timer {
         interval: root.refreshSec * 1000
@@ -271,7 +413,7 @@ PluginComponent {
                 delegate: Rectangle {
                     id: chip
                     required property var modelData
-                    readonly property color lc: root.levelColor(modelData.level)
+                    readonly property color lc: root.levelColor(root.getProviderDisplayLevel(modelData))
                     height: root.widgetThickness
                     width: chipContent.implicitWidth + Theme.spacingS * 2
                     radius: Theme.cornerRadius
@@ -291,7 +433,7 @@ PluginComponent {
                         StyledText {
                             anchors.verticalCenter: parent.verticalCenter
                             visible: !root.compactBar
-                            text: chip.modelData.headlineText
+                            text: root.getProviderDisplayText(chip.modelData)
                             color: chip.lc
                             font.pixelSize: Theme.fontSizeSmall
                             font.weight: Font.Medium
@@ -337,7 +479,7 @@ PluginComponent {
                 model: root.providers
                 delegate: Column {
                     required property var modelData
-                    readonly property color lc: root.levelColor(modelData.level)
+                    readonly property color lc: root.levelColor(root.getProviderDisplayLevel(modelData))
                     spacing: 0
                     width: root.widgetThickness
 
@@ -348,8 +490,9 @@ PluginComponent {
                     }
                     StyledText {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        visible: !root.compactBar && modelData.headlinePct !== null
-                        text: (modelData.headlinePct !== null ? modelData.headlinePct + "" : "")
+                        readonly property var displayPct: root.getProviderDisplayPct(modelData)
+                        visible: !root.compactBar && displayPct !== null
+                        text: (displayPct !== null ? displayPct + "" : "")
                         color: lc
                         font.pixelSize: Theme.fontSizeSmall - 2
                         font.weight: Font.Medium
@@ -375,7 +518,7 @@ PluginComponent {
 
     // ---- Popout: detailed breakdown ----------------------------------------
     popoutWidth: 800
-    popoutHeight: 900
+    popoutHeight: root.mainContentEstimatedHeight + root.popoutChromeEstimatedHeight
 
     popoutContent: Component {
         PopoutComponent {
@@ -386,7 +529,9 @@ PluginComponent {
 
             Item {
                 width: parent.width
-                implicitHeight: root.popoutHeight - popout.headerHeight - popout.detailsHeight - Theme.spacingXL
+                readonly property real leftCardsHeight: cardColumn.implicitHeight > 0 ? cardColumn.implicitHeight : root.quotaCardsEstimatedHeight
+                implicitHeight: 28 + Theme.spacingS + leftCardsHeight
+                height: implicitHeight
 
                 // Top row: last-updated + refresh button
                 Item {
@@ -443,37 +588,29 @@ PluginComponent {
                     width: parent.width
                     spacing: Theme.spacingM
 
-                    DankFlickable {
+                    Column {
+                        id: cardColumn
                         width: 440
-                        height: parent.height
-                        clip: true
-                        contentHeight: cardColumn.height
-                        boundsBehavior: Flickable.StopAtBounds
-                        mouseWheelSpeed: 100
+                        spacing: Theme.spacingS
 
-                        Column {
-                            id: cardColumn
-                            width: parent.width
-                            spacing: Theme.spacingS
+                        Repeater {
+                            model: root.providers
+                            delegate: Rectangle {
+                                id: card
+                                required property var modelData
+                                readonly property color lc: root.levelColor(root.getProviderDisplayLevel(modelData))
+                                width: cardColumn.width
+                                radius: Theme.cornerRadius
+                                color: Theme.surfaceContainerHigh
+                                height: cardCol.implicitHeight + Theme.spacingM * 2
 
-                            Repeater {
-                                model: root.providers
-                                delegate: Rectangle {
-                                    id: card
-                                    required property var modelData
-                                    readonly property color lc: root.levelColor(modelData.level)
-                                    width: cardColumn.width
-                                    radius: Theme.cornerRadius
-                                    color: Theme.surfaceContainerHigh
-                                    height: cardCol.implicitHeight + Theme.spacingM * 2
-
-                                    Column {
-                                        id: cardCol
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.top: parent.top
-                                        anchors.margins: Theme.spacingM
-                                        spacing: Theme.spacingXS
+                                Column {
+                                    id: cardCol
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: Theme.spacingM
+                                    spacing: Theme.spacingXS
 
                                         // Header: icon + name + headline
                                         Item {
@@ -534,7 +671,7 @@ PluginComponent {
                                             StyledText {
                                                 anchors.right: parent.right
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                text: card.modelData.headlineText
+                                                text: root.getProviderDisplayText(card.modelData)
                                                 color: card.lc
                                                 font.pixelSize: Theme.fontSizeLarge
                                                 font.weight: Font.Bold
@@ -554,62 +691,99 @@ PluginComponent {
                                         // Quota windows
                                         Repeater {
                                             model: card.modelData.windows || []
-                                            delegate: Column {
+                                            delegate: Rectangle {
+                                                id: quotaRow
                                                 required property var modelData
+                                                readonly property bool selectable: root.isWindowSelectable(modelData)
+                                                readonly property bool selected: root.isProviderWindowSelected(card.modelData, modelData)
+                                                readonly property color rowColor: root.levelColor(root.quotaLevelFromPct(modelData.remainingPct))
                                                 width: cardCol.width
-                                                spacing: 2
+                                                height: quotaCol.implicitHeight + 4
+                                                radius: Math.max(3, Theme.cornerRadius / 2)
+                                                color: selected ? Qt.rgba(rowColor.r, rowColor.g, rowColor.b, 0.10) : (quotaArea.containsMouse && selectable ? Theme.surfaceContainerHighest : Qt.rgba(0, 0, 0, 0))
 
-                                                Item {
-                                                    width: parent.width
-                                                    height: 16
-                                                    StyledText {
-                                                        anchors.left: parent.left
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                        text: modelData.label
-                                                        color: Theme.surfaceText
-                                                        font.pixelSize: Theme.fontSizeSmall
-                                                        width: parent.width * 0.55
-                                                        elide: Text.ElideRight
-                                                    }
-                                                    StyledText {
-                                                        anchors.right: parent.right
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                        text: {
-                                                            var parts = []
-                                                            if (modelData.remainingPct !== null && modelData.remainingPct !== undefined)
-                                                                parts.push(modelData.remainingPct + "%")
-                                                            var r = root.fmtReset(modelData.resetAt)
-                                                            if (r)
-                                                                parts.push(r)
-                                                            return parts.join("  ·  ")
+                                                Column {
+                                                    id: quotaCol
+                                                    anchors.left: parent.left
+                                                    anchors.right: parent.right
+                                                    anchors.top: parent.top
+                                                    anchors.topMargin: 2
+                                                    spacing: 2
+
+                                                    Item {
+                                                        width: parent.width
+                                                        height: 16
+                                                        StyledText {
+                                                            anchors.left: parent.left
+                                                            anchors.verticalCenter: parent.verticalCenter
+                                                            text: quotaRow.modelData.label
+                                                            color: Theme.surfaceText
+                                                            font.pixelSize: Theme.fontSizeSmall
+                                                            width: parent.width * 0.48
+                                                            elide: Text.ElideRight
                                                         }
-                                                        color: Theme.surfaceVariantText
-                                                        font.pixelSize: Theme.fontSizeSmall
-                                                    }
-                                                }
+                                                        Row {
+                                                            anchors.right: parent.right
+                                                            anchors.verticalCenter: parent.verticalCenter
+                                                            spacing: 4
 
-                                                // progress bar (only when a percentage exists)
-                                                Rectangle {
-                                                    visible: modelData.remainingPct !== null && modelData.remainingPct !== undefined
-                                                    width: parent.width
-                                                    height: 6
-                                                    radius: 3
-                                                    color: Theme.surfaceContainerHighest
+                                                            DankIcon {
+                                                                visible: quotaRow.selected && quotaRow.selectable
+                                                                name: "arrow_right_alt"
+                                                                size: Theme.fontSizeSmall + 2
+                                                                color: quotaRow.rowColor
+                                                                anchors.verticalCenter: parent.verticalCenter
+                                                            }
+
+                                                            StyledText {
+                                                                anchors.verticalCenter: parent.verticalCenter
+                                                                text: {
+                                                                    var parts = []
+                                                                    if (quotaRow.modelData.remainingPct !== null && quotaRow.modelData.remainingPct !== undefined)
+                                                                        parts.push(quotaRow.modelData.remainingPct + "%")
+                                                                    var r = root.fmtReset(quotaRow.modelData.resetAt)
+                                                                    if (r)
+                                                                        parts.push(r)
+                                                                    return parts.join("  ·  ")
+                                                                }
+                                                                color: quotaRow.selected ? Theme.surfaceText : Theme.surfaceVariantText
+                                                                font.pixelSize: Theme.fontSizeSmall
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // progress bar (only when a percentage exists)
                                                     Rectangle {
-                                                        width: parent.width * Math.max(0, Math.min(1, (modelData.remainingPct || 0) / 100))
-                                                        height: parent.height
+                                                        visible: quotaRow.modelData.remainingPct !== null && quotaRow.modelData.remainingPct !== undefined
+                                                        width: parent.width
+                                                        height: 6
                                                         radius: 3
-                                                        color: card.lc
+                                                        color: Theme.surfaceContainerHighest
+                                                        Rectangle {
+                                                            width: parent.width * Math.max(0, Math.min(1, (quotaRow.modelData.remainingPct || 0) / 100))
+                                                            height: parent.height
+                                                            radius: 3
+                                                            color: quotaRow.selected ? quotaRow.rowColor : Qt.rgba(quotaRow.rowColor.r, quotaRow.rowColor.g, quotaRow.rowColor.b, 0.55)
+                                                        }
+                                                    }
+
+                                                    StyledText {
+                                                        visible: quotaRow.modelData.detail && quotaRow.modelData.detail.length > 0
+                                                        width: parent.width
+                                                        text: quotaRow.modelData.detail || ""
+                                                        color: Theme.surfaceVariantText
+                                                        font.pixelSize: Theme.fontSizeSmall - 1
+                                                        wrapMode: Text.WordWrap
                                                     }
                                                 }
 
-                                                StyledText {
-                                                    visible: modelData.detail && modelData.detail.length > 0
-                                                    width: parent.width
-                                                    text: modelData.detail || ""
-                                                    color: Theme.surfaceVariantText
-                                                    font.pixelSize: Theme.fontSizeSmall - 1
-                                                    wrapMode: Text.WordWrap
+                                                MouseArea {
+                                                    id: quotaArea
+                                                    anchors.fill: parent
+                                                    enabled: quotaRow.selectable
+                                                    hoverEnabled: quotaRow.selectable
+                                                    cursorShape: quotaRow.selectable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                    onClicked: root.setProviderWidgetMetric(card.modelData.id, quotaRow.modelData.label)
                                                 }
                                             }
                                         }
@@ -617,8 +791,6 @@ PluginComponent {
                                 }
                             }
                         }
-                    }
-
                     // Right Side: Token Tracker Panel(s)
                     Column {
                         id: tokenTrackersCol
@@ -628,20 +800,18 @@ PluginComponent {
 
                         readonly property bool showCodex: root.codexProvider !== null
                         readonly property bool showHermes: root.showHermesTracker
+                        readonly property int visibleTrackerCount: (showCodex ? 1 : 0) + (showHermes ? 1 : 0)
+                        readonly property real trackerHeight: visibleTrackerCount > 0 ? (height - (visibleTrackerCount - 1) * spacing) / visibleTrackerCount : 0
 
                         // Codex Token Tracker Card
                         Rectangle {
                             id: codexTrackerCard
                             width: parent.width
                             visible: tokenTrackersCol.showCodex
-                            height: {
-                                if (tokenTrackersCol.showCodex && tokenTrackersCol.showHermes) {
-                                    return (parent.height - Theme.spacingM) / 2;
-                                }
-                                return parent.height;
-                            }
+                            height: visible ? tokenTrackersCol.trackerHeight : 0
                             radius: Theme.cornerRadius
                             color: Theme.surfaceContainerHigh
+                            clip: true
 
                             property var hoveredBarData: null
 
@@ -682,7 +852,7 @@ PluginComponent {
 
                                 Rectangle {
                                     width: parent.width
-                                    height: codexTrackerCard.height > 400 ? 140 : 80
+                                    height: codexTrackerCard.height > 400 ? 140 : (codexTrackerCard.height < 220 ? 60 : 80)
                                     color: Theme.surfaceContainerHighest
                                     radius: Theme.cornerRadius
 
@@ -830,7 +1000,7 @@ PluginComponent {
                                         required property color colorDot
                                         property bool isSubset: false
                                         width: parent.width
-                                        height: codexTrackerCard.height > 400 ? 20 : 15
+                                        height: codexTrackerCard.height > 400 ? 20 : (codexTrackerCard.height < 220 ? 13 : 15)
 
                                         Row {
                                             anchors.left: parent.left
@@ -912,14 +1082,10 @@ PluginComponent {
                             id: hermesTrackerCard
                             width: parent.width
                             visible: tokenTrackersCol.showHermes
-                            height: {
-                                if (tokenTrackersCol.showCodex && tokenTrackersCol.showHermes) {
-                                    return (parent.height - Theme.spacingM) / 2;
-                                }
-                                return parent.height;
-                            }
+                            height: visible ? tokenTrackersCol.trackerHeight : 0
                             radius: Theme.cornerRadius
                             color: Theme.surfaceContainerHigh
+                            clip: true
 
                             property var hoveredBarData: null
 
@@ -952,7 +1118,7 @@ PluginComponent {
 
                                 Rectangle {
                                     width: parent.width
-                                    height: hermesTrackerCard.height > 400 ? 140 : 80
+                                    height: hermesTrackerCard.height > 400 ? 140 : (hermesTrackerCard.height < 220 ? 60 : 80)
                                     color: Theme.surfaceContainerHighest
                                     radius: Theme.cornerRadius
 
@@ -1051,77 +1217,68 @@ PluginComponent {
                                 }
 
                                 // Legend / Detailed rows of active day models
-                                DankFlickable {
+                                Column {
+                                    id: legendCol
                                     width: parent.width
-                                    height: hermesTrackerCard.height > 400 ? 110 : 70
-                                    clip: true
-                                    contentHeight: legendCol.implicitHeight
-                                    boundsBehavior: Flickable.StopAtBounds
-                                    mouseWheelSpeed: 100
+                                    spacing: hermesTrackerCard.height > 400 ? Theme.spacingXS : 1
 
-                                    Column {
-                                        id: legendCol
-                                        width: parent.width
-                                        spacing: hermesTrackerCard.height > 400 ? Theme.spacingXS : 1
+                                    Repeater {
+                                        model: {
+                                            var dayData = hermesTrackerCard.hoveredBarData ? hermesTrackerCard.hoveredBarData : hermesTrackerCard.todayData;
+                                            if (!dayData || !dayData.models)
+                                                return [];
+                                            var mList = dayData.models.slice();
+                                            mList.sort(function(a, b) { return b.tokens - a.tokens; });
+                                            return mList;
+                                        }
 
-                                        Repeater {
-                                            model: {
-                                                var dayData = hermesTrackerCard.hoveredBarData ? hermesTrackerCard.hoveredBarData : hermesTrackerCard.todayData;
-                                                if (!dayData || !dayData.models)
-                                                    return [];
-                                                var mList = dayData.models.slice();
-                                                mList.sort(function(a, b) { return b.tokens - a.tokens; });
-                                                return mList;
-                                            }
+                                        delegate: Item {
+                                            required property var modelData
+                                            width: legendCol.width
+                                            height: hermesTrackerCard.height > 400 ? 20 : (hermesTrackerCard.height < 220 ? 13 : 15)
 
-                                            delegate: Item {
-                                                required property var modelData
-                                                width: legendCol.width
-                                                height: hermesTrackerCard.height > 400 ? 20 : 15
+                                            Row {
+                                                anchors.left: parent.left
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                spacing: Theme.spacingXS
 
-                                                Row {
-                                                    anchors.left: parent.left
+                                                Rectangle {
+                                                    width: 8
+                                                    height: width
+                                                    radius: width / 2
+                                                    color: root.getModelColor(modelData.model)
                                                     anchors.verticalCenter: parent.verticalCenter
-                                                    spacing: Theme.spacingXS
-
-                                                    Rectangle {
-                                                        width: 8
-                                                        height: width
-                                                        radius: width / 2
-                                                        color: root.getModelColor(modelData.model)
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                    }
-
-                                                    StyledText {
-                                                        text: modelData.model
-                                                        font.pixelSize: hermesTrackerCard.height > 400 ? Theme.fontSizeSmall : Theme.fontSizeSmall - 1
-                                                        color: Theme.surfaceText
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                    }
                                                 }
 
-                                                Row {
-                                                    anchors.right: parent.right
+                                                StyledText {
+                                                    text: modelData.model
+                                                    font.pixelSize: hermesTrackerCard.height > 400 ? Theme.fontSizeSmall : Theme.fontSizeSmall - 1
+                                                    color: Theme.surfaceText
                                                     anchors.verticalCenter: parent.verticalCenter
-                                                    spacing: Theme.spacingS
+                                                }
+                                            }
 
-                                                    StyledText {
-                                                        text: root.fmtTokens(modelData.tokens)
-                                                        font.pixelSize: hermesTrackerCard.height > 400 ? Theme.fontSizeSmall : Theme.fontSizeSmall - 1
-                                                        font.weight: Font.Medium
-                                                        color: Theme.surfaceText
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                    }
+                                            Row {
+                                                anchors.right: parent.right
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                spacing: Theme.spacingS
 
-                                                    StyledText {
-                                                        visible: hermesTrackerCard.activeDayTotal > 0
-                                                        text: Math.round((modelData.tokens / hermesTrackerCard.activeDayTotal) * 100) + "%"
-                                                        font.pixelSize: hermesTrackerCard.height > 400 ? Theme.fontSizeSmall - 1 : Theme.fontSizeSmall - 2
-                                                        color: Theme.surfaceVariantText
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                        width: 32
-                                                        horizontalAlignment: Text.AlignRight
-                                                    }
+                                                StyledText {
+                                                    text: root.fmtTokens(modelData.tokens)
+                                                    font.pixelSize: hermesTrackerCard.height > 400 ? Theme.fontSizeSmall : Theme.fontSizeSmall - 1
+                                                    font.weight: Font.Medium
+                                                    color: Theme.surfaceText
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                }
+
+                                                StyledText {
+                                                    visible: hermesTrackerCard.activeDayTotal > 0
+                                                    text: Math.round((modelData.tokens / hermesTrackerCard.activeDayTotal) * 100) + "%"
+                                                    font.pixelSize: hermesTrackerCard.height > 400 ? Theme.fontSizeSmall - 1 : Theme.fontSizeSmall - 2
+                                                    color: Theme.surfaceVariantText
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    width: 32
+                                                    horizontalAlignment: Text.AlignRight
                                                 }
                                             }
                                         }
