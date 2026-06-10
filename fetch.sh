@@ -151,13 +151,23 @@ codex_fetch() {
     [ $((now - mtime)) -gt 86400 ] && stale=true
     
     local stats; stats=$(codex_token_stats)
-    # Pass whether codex is exhausted as a parameter to jq
+    # Pass whether codex is exhausted as a parameter to jq.
+    # Also pass $now so jq can detect already-reset windows and clear stale data.
     printf '%s' "$rl" | jq -c --argjson mtime "$mtime" \
+        --argjson now "$now" \
         --argjson stale "$stale" \
         --argjson exhausted "$codex_exhausted" \
         --argjson tokenTracker "$stats" '
-        (if $exhausted or .limit_id == "premium" then 100 else (((.primary.used_percent) // 0)) end) as $pu |
-        (((.secondary.used_percent) // 0)) as $su |
+        # If primary.resets_at is in the past, the 5h window has already refreshed;
+        # treat used_percent as 0 regardless of what the stale session data says.
+        ((.primary.resets_at // 0) | if . > 0 and . < $now then true else false end) as $pri_reset |
+        ((.secondary.resets_at // 0) | if . > 0 and . < $now then true else false end) as $sec_reset |
+        # Only honour the exhaustion flag if the primary window has NOT yet reset.
+        (if $pri_reset then 0
+         elif $exhausted or .limit_id == "premium" then 100
+         else ((.primary.used_percent) // 0)
+         end) as $pu |
+        (if $sec_reset then 0 else ((.secondary.used_percent) // 0) end) as $su |
         ((100 - $pu) | floor) as $pr |
         ((100 - $su) | floor) as $sr |
         ([$pr,$sr] | min) as $head |
