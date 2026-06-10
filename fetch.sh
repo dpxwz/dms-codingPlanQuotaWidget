@@ -43,11 +43,12 @@ codex_token_stats() {
     local today_in=0 today_out=0 today_cached=0 today_reasoning=0 today_total=0
     local history_json="["
     
-    local i d day_dir f val ttu tot in out cached reasoning date_str day_sum
+    local i d day_dir f val ttu tot in out cached reasoning date_str
+    local day_sum day_in day_out day_cached day_reasoning
     for i in {0..29}; do
         d=$(date -d "$i days ago" +%Y/%m/%d)
         day_dir="$sessions_dir/$d"
-        day_sum=0
+        day_sum=0; day_in=0; day_out=0; day_cached=0; day_reasoning=0
         if [ -d "$day_dir" ]; then
             while read -r f; do
                 [ -f "$f" ] || continue
@@ -56,29 +57,29 @@ codex_token_stats() {
                     ttu=$(grep -oP '"total_token_usage"\s*:\s*\{[^\}]+\}' <<< "$val")
                     if [ -n "$ttu" ]; then
                         tot=$(grep -oP '"total_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
-                        day_sum=$((day_sum + ${tot:-0}))
+                        in=$(grep -oP '"input_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
+                        out=$(grep -oP '"output_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
+                        cached=$(grep -oP '"cached_input_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
+                        reasoning=$(grep -oP '"reasoning_output_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
                         
-                        if [ "$i" -eq 0 ]; then
-                            in=$(grep -oP '"input_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
-                            out=$(grep -oP '"output_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
-                            cached=$(grep -oP '"cached_input_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
-                            reasoning=$(grep -oP '"reasoning_output_tokens"\s*:\s*\K[0-9]+' <<< "$ttu")
-                            
-                            today_in=$((today_in + ${in:-0}))
-                            today_out=$((today_out + ${out:-0}))
-                            today_cached=$((today_cached + ${cached:-0}))
-                            today_reasoning=$((today_reasoning + ${reasoning:-0}))
-                            today_total=$((today_total + ${tot:-0}))
-                        fi
+                        day_sum=$((day_sum + ${tot:-0}))
+                        day_in=$((day_in + ${in:-0}))
+                        day_out=$((day_out + ${out:-0}))
+                        day_cached=$((day_cached + ${cached:-0}))
+                        day_reasoning=$((day_reasoning + ${reasoning:-0}))
                     fi
                 fi
             done < <(find "$day_dir" -type f -name '*.jsonl' 2>/dev/null)
+        fi
+        if [ "$i" -eq 0 ]; then
+            today_in=$day_in; today_out=$day_out; today_cached=$day_cached
+            today_reasoning=$day_reasoning; today_total=$day_sum
         fi
         date_str=$(date -d "$i days ago" +%Y-%m-%d)
         if [ "$i" -gt 0 ]; then
             history_json="${history_json},"
         fi
-        history_json="${history_json}{\"date\":\"$date_str\",\"total\":$day_sum}"
+        history_json="${history_json}{\"date\":\"$date_str\",\"total\":$day_sum,\"input\":$day_in,\"output\":$day_out,\"cached\":$day_cached,\"reasoning\":$day_reasoning}"
     done
     history_json="${history_json}]"
     

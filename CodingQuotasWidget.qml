@@ -816,11 +816,13 @@ PluginComponent {
                             property var hoveredBarData: null
 
                             readonly property var todayTokens: (root.codexProvider && root.codexProvider.tokenTracker && root.codexProvider.tokenTracker.today) ? root.codexProvider.tokenTracker.today : null
-                            readonly property int todayTotal: todayTokens ? todayTokens.total : 0
-                            readonly property int todayCached: todayTokens ? todayTokens.cached : 0
-                            readonly property int todayActiveInput: todayTokens ? (todayTokens.input - todayTokens.cached) : 0
-                            readonly property int todayOutput: todayTokens ? todayTokens.output : 0
-                            readonly property int todayReasoning: todayTokens ? todayTokens.reasoning : 0
+                            // When hovering a history bar, show that day's breakdown; otherwise show today
+                            readonly property var activeData: hoveredBarData ? hoveredBarData : todayTokens
+                            readonly property int todayTotal: activeData ? (activeData.total || 0) : 0
+                            readonly property int todayCached: activeData ? (activeData.cached || 0) : 0
+                            readonly property int todayActiveInput: activeData ? ((activeData.input || 0) - (activeData.cached || 0)) : 0
+                            readonly property int todayOutput: activeData ? (activeData.output || 0) : 0
+                            readonly property int todayReasoning: activeData ? (activeData.reasoning || 0) : 0
 
                             readonly property color colorCached: "#00b4d8"
                             readonly property color colorActiveInput: "#90e0ef"
@@ -920,7 +922,7 @@ PluginComponent {
                                     color: Theme.surfaceVariantText
                                     text: {
                                         if (codexTrackerCard.hoveredBarData) {
-                                            return "History (" + codexTrackerCard.hoveredBarData.date + "): " + root.fmtTokens(codexTrackerCard.hoveredBarData.total) + " tokens"
+                                            return codexTrackerCard.hoveredBarData.date + ": " + root.fmtTokens(codexTrackerCard.hoveredBarData.total) + " tokens"
                                         } else {
                                             var todayDate = (root.codexProvider && root.codexProvider.tokenTracker && root.codexProvider.tokenTracker.history && root.codexProvider.tokenTracker.history.length > 0) ? root.codexProvider.tokenTracker.history[0].date : ""
                                             return "Today (" + todayDate + "): " + root.fmtTokens(codexTrackerCard.todayTotal) + "\nPast 30 Days: " + root.fmtTokens(root.codex30dTotal)
